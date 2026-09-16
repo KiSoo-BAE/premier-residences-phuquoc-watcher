@@ -1,5 +1,7 @@
 {
-  "last_status": null,
+  "last_status": "unavailable",
   "available_repeat_sent": false,
-  "failure_count": 0
+  "failure_count": 0,
+  "last_check_utc": "2026-09-16T04:13:44.897401+00:00",
+  "last_note": "Unavailable marker detected"
 }

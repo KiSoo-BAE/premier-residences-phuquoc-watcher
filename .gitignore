@@ -1,0 +1,4 @@
+config.json
+diagnostics/
+__pycache__/
+*.pyc

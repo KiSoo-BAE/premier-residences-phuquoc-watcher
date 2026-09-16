@@ -1,0 +1,63 @@
+name: Premier Residences Watcher
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: premier-residences-watcher
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 4
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install Python packages
+        run: pip install -r requirements.txt
+
+      - name: Run availability check
+        run: python cloud_watcher.py
+
+      - name: Upload diagnostics when created
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-${{ github.run_id }}
+          path: diagnostics/
+          if-no-files-found: ignore
+          retention-days: 3
+
+      - name: Persist watcher state and keep schedule active
+        if: always()
+        run: |
+          WEEK=$(date -u +%G-W%V)
+          if [ "$(cat .watcher_keepalive 2>/dev/null || true)" != "$WEEK" ]; then
+            echo "$WEEK" > .watcher_keepalive
+          fi
+          if git diff --quiet -- state.json .watcher_keepalive; then
+            echo "No state change to commit."
+            exit 0
+          fi
+          git config user.name "premier-watcher-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add state.json .watcher_keepalive
+          git commit -m "chore: update watcher state [skip ci]"
+          git push

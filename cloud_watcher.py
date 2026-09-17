@@ -267,7 +267,6 @@ def main() -> int:
             )
 
     state["last_status"] = result.status
-    state["last_check_utc"] = datetime.now(timezone.utc).isoformat()
     state["last_note"] = result.note
     save_state(state)
     return 0

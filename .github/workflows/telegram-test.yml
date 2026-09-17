@@ -1,0 +1,43 @@
+name: Telegram Connection Test
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/telegram-test.yml"
+
+jobs:
+  telegram-test:
+    runs-on: ubuntu-latest
+    env:
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+    steps:
+      - name: Validate Telegram secrets
+        shell: bash
+        run: |
+          set -e
+          if [ -z "$TELEGRAM_BOT_TOKEN" ]; then
+            echo "ERROR: TELEGRAM_BOT_TOKEN secret is missing"
+            exit 1
+          fi
+          if [ -z "$TELEGRAM_CHAT_ID" ]; then
+            echo "ERROR: TELEGRAM_CHAT_ID secret is missing"
+            exit 1
+          fi
+          echo "Telegram secrets are present."
+
+      - name: Send Telegram test message
+        shell: bash
+        run: |
+          set -e
+          RESPONSE=$(curl -sS \
+            -X POST \
+            "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+            -d "chat_id=${TELEGRAM_CHAT_ID}" \
+            --data-urlencode $'text=✅ Premier Residences 감시기 Telegram 연결 테스트 성공\n\nGitHub Actions → Telegram 정상 연결\n호텔: Premier Residences Phu Quoc Emerald Bay\n숙박일: 2026-12-25 ~ 2026-12-28')
+
+          echo "$RESPONSE"
+          echo "$RESPONSE" | grep '"ok":true' >/dev/null
+          echo "SUCCESS: Telegram message sent"

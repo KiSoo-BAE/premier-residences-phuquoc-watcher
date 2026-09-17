@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 concurrency:
-  group: premier-residences-watcher
-  cancel-in-progress: false
+  group: premier-residences-watcher-chain
+  cancel-in-progress: true
 
 jobs:
   check:

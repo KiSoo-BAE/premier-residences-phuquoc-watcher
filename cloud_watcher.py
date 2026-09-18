@@ -473,6 +473,95 @@ def safe_checkout_probe(driver) -> CheckoutProbe:
                 "조식 포함 요금으로 예약자 정보 입력 단계까지 진입했습니다.",
             )
 
+        # Accor may show an optional extras/customisation page after Continue.
+        # Never add paid extras; only use the explicit "Skip this step" control.
+        if "customise your stay" in low or "customize your stay" in low or "skip this step" in low:
+            skip_btn = None
+            for xp in [
+                "//*[normalize-space(text())='Skip this step']",
+                "//*[normalize-space(.)='Skip this step']",
+                "//*[@aria-label='Skip this step']",
+            ]:
+                try:
+                    for el in driver.find_elements("xpath", xp):
+                        if el.is_displayed():
+                            skip_btn = el
+                            break
+                    if skip_btn is not None:
+                        break
+                except Exception:
+                    continue
+
+            if skip_btn is None:
+                save_diagnostics(driver, "checkout_extras_skip_missing", body)
+                return CheckoutProbe(
+                    "safe_stop",
+                    driver.current_url,
+                    "추가옵션 화면까지 진입했지만 Skip this step 버튼을 찾지 못해 중지했습니다.",
+                )
+
+            try:
+                clickable = driver.execute_script(
+                    """
+                    let el = arguments[0];
+                    for (let i=0; el && i<6; i++, el=el.parentElement) {
+                      const tag=(el.tagName||'').toLowerCase();
+                      const role=el.getAttribute && el.getAttribute('role');
+                      if (tag==='button'||tag==='a'||role==='button'||typeof el.onclick==='function') return el;
+                    }
+                    return arguments[0];
+                    """,
+                    skip_btn,
+                )
+                if clickable is not None:
+                    skip_btn = clickable
+            except Exception:
+                pass
+
+            before_skip_url = driver.current_url
+            driver.execute_script("arguments[0].scrollIntoView({block:'center'});", skip_btn)
+            time.sleep(0.5)
+            try:
+                skip_btn.click()
+            except Exception:
+                driver.execute_script("arguments[0].click();", skip_btn)
+            log.info("CHECKOUT_PROBE clicked Skip this step; no extras selected")
+
+            for _ in range(20):
+                time.sleep(0.5)
+                body = driver.find_element("tag name", "body").text or ""
+                low = body.lower()
+                if (
+                    driver.current_url != before_skip_url
+                    or any(marker in low for marker in form_markers)
+                    or any(marker in low for marker in stop_markers)
+                ):
+                    break
+
+            body = driver.find_element("tag name", "body").text or ""
+            low = body.lower()
+            if any(marker in low for marker in stop_markers):
+                save_diagnostics(driver, "checkout_payment_after_extras", body)
+                return CheckoutProbe(
+                    "payment_boundary",
+                    driver.current_url,
+                    "추가옵션을 건너뛴 뒤 결제/최종확정 단계가 감지되어 중지했습니다.",
+                )
+            if any(marker in low for marker in form_markers):
+                save_diagnostics(driver, "checkout_guest_details_after_extras", body)
+                return CheckoutProbe(
+                    "guest_details",
+                    driver.current_url,
+                    "조식 포함 요금 선택 후 추가옵션을 건너뛰고 예약자 정보 입력 단계까지 진입했습니다.",
+                )
+
+            save_diagnostics(driver, "checkout_after_extras_skip", body)
+            return CheckoutProbe(
+                "safe_stop",
+                driver.current_url,
+                "추가옵션을 선택하지 않고 Skip this step까지 진행했으며 다음 화면에서 안전하게 중지했습니다.",
+            )
+
         save_diagnostics(driver, "checkout_after_continue", body)
         return CheckoutProbe(
             "safe_stop",

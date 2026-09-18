@@ -222,10 +222,10 @@ def safe_checkout_probe(driver) -> CheckoutProbe:
     This is a verification/preparation probe, not an order-placement routine.
     """
     stop_markers = [
-        "payment",
         "credit card",
+        "card number",
         "card details",
-        "billing",
+        "billing address",
         "pay now",
         "complete booking",
         "confirm booking",
@@ -255,6 +255,7 @@ def safe_checkout_probe(driver) -> CheckoutProbe:
         "choose rate",
         "select room",
         "choose room",
+        "continue",
     ]
     blocked_words = [
         "pay",

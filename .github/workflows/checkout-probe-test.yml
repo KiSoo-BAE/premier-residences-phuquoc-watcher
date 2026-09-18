@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - ".github/workflows/checkout-probe-test.yml"
+      - "cloud_watcher.py"
 
 jobs:
   test:

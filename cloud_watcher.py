@@ -207,6 +207,167 @@ def check_page(driver) -> CheckResult:
         return CheckResult("error", "", "", (), f"{type(exc).__name__}: {exc}")
 
 
+
+@dataclass
+class CheckoutProbe:
+    stage: str
+    url: str
+    note: str = ""
+
+
+def safe_checkout_probe(driver) -> CheckoutProbe:
+    """
+    Advance only through obviously non-final navigation controls.
+    Never fill personal/payment fields and never click payment/confirmation actions.
+    This is a verification/preparation probe, not an order-placement routine.
+    """
+    stop_markers = [
+        "payment",
+        "credit card",
+        "card details",
+        "billing",
+        "pay now",
+        "complete booking",
+        "confirm booking",
+        "confirm reservation",
+        "finalise booking",
+        "finalize booking",
+    ]
+    form_markers = [
+        "guest details",
+        "your details",
+        "contact details",
+        "personal information",
+        "first name",
+        "last name",
+        "email address",
+        "phone number",
+    ]
+    safe_words = [
+        "select",
+        "choose",
+        "continue",
+        "next",
+        "view rates",
+        "see rates",
+        "show rates",
+        "select rate",
+        "choose rate",
+        "select room",
+        "choose room",
+    ]
+    blocked_words = [
+        "pay",
+        "confirm",
+        "complete",
+        "purchase",
+        "submit",
+        "reserve",
+        "book now",
+        "finalise",
+        "finalize",
+    ]
+
+    try:
+        for step in range(1, 5):
+            body = driver.find_element("tag name", "body").text or ""
+            low = body.lower()
+            current_url = driver.current_url
+
+            if any(marker in low for marker in stop_markers):
+                save_diagnostics(driver, "checkout_payment_stop", body)
+                return CheckoutProbe(
+                    "payment_boundary",
+                    current_url,
+                    "결제/최종확정 단계가 감지되어 자동 진행을 중지했습니다.",
+                )
+
+            if any(marker in low for marker in form_markers):
+                save_diagnostics(driver, "checkout_guest_details_stop", body)
+                return CheckoutProbe(
+                    "guest_details",
+                    current_url,
+                    "예약자 정보 입력 단계가 감지되어 자동 진행을 중지했습니다.",
+                )
+
+            candidates = []
+            for selector in ["button", "a", "[role='button']"]:
+                try:
+                    candidates.extend(driver.find_elements("css selector", selector))
+                except Exception:
+                    pass
+
+            clicked = False
+            for el in candidates:
+                try:
+                    if not el.is_displayed() or not el.is_enabled():
+                        continue
+                    txt = re.sub(r"\s+", " ", (el.text or "")).strip().lower()
+                    aria = (el.get_attribute("aria-label") or "").strip().lower()
+                    label = f"{txt} {aria}".strip()
+                    if not label:
+                        continue
+                    if any(word in label for word in blocked_words):
+                        continue
+                    if not any(word in label for word in safe_words):
+                        continue
+                    driver.execute_script(
+                        "arguments[0].scrollIntoView({block:'center'});", el
+                    )
+                    time.sleep(0.5)
+                    try:
+                        el.click()
+                    except Exception:
+                        driver.execute_script("arguments[0].click();", el)
+                    log.info("CHECKOUT_PROBE step=%s clicked=%r", step, label[:120])
+                    time.sleep(5)
+                    clicked = True
+                    break
+                except Exception:
+                    continue
+
+            if not clicked:
+                save_diagnostics(driver, "checkout_safe_stop", body)
+                return CheckoutProbe(
+                    "safe_stop",
+                    current_url,
+                    "안전하게 자동 클릭할 수 있는 다음 단계가 없어 여기서 중지했습니다.",
+                )
+
+        body = driver.find_element("tag name", "body").text or ""
+        save_diagnostics(driver, "checkout_max_steps", body)
+        return CheckoutProbe(
+            "max_steps",
+            driver.current_url,
+            "안전 제한(최대 4단계)에 도달해 자동 진행을 중지했습니다.",
+        )
+    except Exception as exc:
+        return CheckoutProbe(
+            "probe_error",
+            getattr(driver, "current_url", WATCH_URL),
+            f"{type(exc).__name__}: {exc}",
+        )
+
+
+def checkout_probe_message(probe: CheckoutProbe) -> str:
+    labels = {
+        "payment_boundary": "✅ 결제/최종확정 직전 단계 감지",
+        "guest_details": "✅ 예약자 정보 입력 단계까지 진입",
+        "safe_stop": "ℹ️ 안전 자동진행 중지",
+        "max_steps": "ℹ️ 안전 제한 도달",
+        "probe_error": "⚠️ 결제직전 탐색 오류",
+    }
+    label = labels.get(probe.stage, probe.stage)
+    return (
+        f"{label}\n\n"
+        f"상태: {probe.note}\n"
+        f"현재 URL: {probe.url}\n\n"
+        "※ 자동화는 개인정보/카드정보를 입력하지 않고, 결제·최종확정 버튼도 누르지 않습니다. "
+        "GitHub의 브라우저 세션은 사용자 휴대폰/PC 브라우저와 공유되지 않으므로, "
+        "이 URL이 동일한 예약 상태를 그대로 이어주지 않을 수 있습니다."
+    )
+
+
 def availability_message(result: CheckResult, repeat: bool = False) -> str:
     prices = ", ".join(result.prices) if result.prices else "페이지에서 직접 확인 필요"
     repeat_line = "\n⚠️ 아직 예약 가능 상태입니다. (1회 재알림)" if repeat else ""
@@ -225,51 +386,79 @@ def availability_message(result: CheckResult, repeat: bool = False) -> str:
     )
 
 
+
 def main() -> int:
     state = load_state()
     driver = None
+    result = None
     try:
         driver = make_driver()
         result = check_page(driver)
+
+        last = state.get("last_status")
+        log.info(
+            "RESULT=%s | last=%s | note=%s | prices=%s | title=%s",
+            result.status,
+            last,
+            result.note,
+            result.prices,
+            result.title,
+        )
+
+        if result.status == "available":
+            state["failure_count"] = 0
+            if last != "available":
+                state["available_repeat_sent"] = False
+
+                # Alert first so checkout probing can never delay the primary availability alert.
+                send_telegram(availability_message(result, repeat=False))
+                log.info("Telegram availability alert sent")
+
+                probe = safe_checkout_probe(driver)
+                log.info(
+                    "CHECKOUT_PROBE stage=%s | url=%s | note=%s",
+                    probe.stage,
+                    probe.url,
+                    probe.note,
+                )
+                try:
+                    send_telegram(checkout_probe_message(probe))
+                    log.info("Telegram checkout-probe result sent")
+                except Exception:
+                    log.exception("Failed to send checkout-probe Telegram message")
+
+            elif not state.get("available_repeat_sent", False):
+                send_telegram(availability_message(result, repeat=True))
+                state["available_repeat_sent"] = True
+                log.info("Telegram one-time repeat alert sent")
+
+        elif result.status == "unavailable":
+            state["failure_count"] = 0
+            state["available_repeat_sent"] = False
+            if last == "available":
+                send_telegram(
+                    "ℹ️ Premier Residences 객실이 다시 예약 불가 상태로 바뀌었습니다. 계속 감시합니다."
+                )
+
+        else:
+            state["failure_count"] = int(state.get("failure_count", 0)) + 1
+            if state["failure_count"] == 3:
+                send_telegram(
+                    "⚠️ Premier Residences 감시 중 3회 연속 페이지 판독 오류가 발생했습니다. "
+                    "GitHub Actions 로그를 확인해 주세요. 감시는 계속됩니다."
+                )
+
+        state["last_status"] = result.status
+        state["last_note"] = result.note
+        save_state(state)
+        return 0
+
     finally:
         if driver is not None:
             try:
                 driver.quit()
             except Exception:
                 pass
-
-    last = state.get("last_status")
-    log.info("RESULT=%s | last=%s | note=%s | prices=%s | title=%s", result.status, last, result.note, result.prices, result.title)
-
-    if result.status == "available":
-        state["failure_count"] = 0
-        if last != "available":
-            state["available_repeat_sent"] = False
-            send_telegram(availability_message(result, repeat=False))
-            log.info("Telegram availability alert sent")
-        elif not state.get("available_repeat_sent", False):
-            send_telegram(availability_message(result, repeat=True))
-            state["available_repeat_sent"] = True
-            log.info("Telegram one-time repeat alert sent")
-
-    elif result.status == "unavailable":
-        state["failure_count"] = 0
-        state["available_repeat_sent"] = False
-        if last == "available":
-            send_telegram("ℹ️ Premier Residences 객실이 다시 예약 불가 상태로 바뀌었습니다. 계속 감시합니다.")
-
-    else:
-        state["failure_count"] = int(state.get("failure_count", 0)) + 1
-        if state["failure_count"] == 3:
-            send_telegram(
-                "⚠️ Premier Residences 감시 중 3회 연속 페이지 판독 오류가 발생했습니다. "
-                "GitHub Actions 로그를 확인해 주세요. 감시는 계속됩니다."
-            )
-
-    state["last_status"] = result.status
-    state["last_note"] = result.note
-    save_state(state)
-    return 0
 
 
 if __name__ == "__main__":

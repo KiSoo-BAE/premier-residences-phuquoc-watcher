@@ -217,9 +217,8 @@ class CheckoutProbe:
 
 def safe_checkout_probe(driver) -> CheckoutProbe:
     """
-    Advance only through obviously non-final navigation controls.
-    Never fill personal/payment fields and never click payment/confirmation actions.
-    This is a verification/preparation probe, not an order-placement routine.
+    Prefer a breakfast-included rate, add one room to the basket, then click Continue.
+    Never fill personal/payment fields and never click payment/final-confirmation actions.
     """
     stop_markers = [
         "credit card",
@@ -243,104 +242,139 @@ def safe_checkout_probe(driver) -> CheckoutProbe:
         "email address",
         "phone number",
     ]
-    safe_words = [
-        "select",
-        "choose",
-        "continue",
-        "next",
-        "view rates",
-        "see rates",
-        "show rates",
-        "select rate",
-        "choose rate",
-        "select room",
-        "choose room",
-        "continue",
-    ]
-    blocked_words = [
-        "pay",
-        "confirm",
-        "complete",
-        "purchase",
-        "submit",
-        "reserve",
-        "book now",
-        "finalise",
-        "finalize",
-    ]
 
     try:
-        for step in range(1, 5):
-            body = driver.find_element("tag name", "body").text or ""
-            low = body.lower()
-            current_url = driver.current_url
+        body = driver.find_element("tag name", "body").text or ""
+        low = body.lower()
 
-            if any(marker in low for marker in stop_markers):
-                save_diagnostics(driver, "checkout_payment_stop", body)
-                return CheckoutProbe(
-                    "payment_boundary",
-                    current_url,
-                    "결제/최종확정 단계가 감지되어 자동 진행을 중지했습니다.",
-                )
-
-            if any(marker in low for marker in form_markers):
-                save_diagnostics(driver, "checkout_guest_details_stop", body)
-                return CheckoutProbe(
-                    "guest_details",
-                    current_url,
-                    "예약자 정보 입력 단계가 감지되어 자동 진행을 중지했습니다.",
-                )
-
-            candidates = []
-            for selector in ["button", "a", "[role='button']"]:
-                try:
-                    candidates.extend(driver.find_elements("css selector", selector))
-                except Exception:
-                    pass
-
-            clicked = False
-            for el in candidates:
-                try:
-                    if not el.is_displayed() or not el.is_enabled():
-                        continue
-                    txt = re.sub(r"\s+", " ", (el.text or "")).strip().lower()
-                    aria = (el.get_attribute("aria-label") or "").strip().lower()
-                    label = f"{txt} {aria}".strip()
-                    if not label:
-                        continue
-                    if any(word in label for word in blocked_words):
-                        continue
-                    if not any(word in label for word in safe_words):
-                        continue
-                    driver.execute_script(
-                        "arguments[0].scrollIntoView({block:'center'});", el
-                    )
-                    time.sleep(0.5)
-                    try:
-                        el.click()
-                    except Exception:
-                        driver.execute_script("arguments[0].click();", el)
-                    log.info("CHECKOUT_PROBE step=%s clicked=%r", step, label[:120])
-                    time.sleep(5)
-                    clicked = True
-                    break
-                except Exception:
+        # Prefer a visible rate card that explicitly includes breakfast.
+        breakfast_clicked = False
+        cards = driver.find_elements(
+            "xpath",
+            "//*[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', "
+            "'abcdefghijklmnopqrstuvwxyz'), 'breakfast included')]",
+        )
+        for card in cards:
+            try:
+                if not card.is_displayed():
                     continue
+                # Walk upward to a compact rate-card ancestor containing a room-selection control.
+                node = card
+                for _ in range(6):
+                    buttons = node.find_elements(
+                        "xpath",
+                        ".//*[self::button or self::a or @role='button']",
+                    )
+                    for btn in buttons:
+                        if not btn.is_displayed() or not btn.is_enabled():
+                            continue
+                        label = re.sub(
+                            r"\\s+",
+                            " ",
+                            ((btn.text or "") + " " + (btn.get_attribute("aria-label") or "")),
+                        ).strip().lower()
+                        if "choose this room" in label or "select" in label or "choose" in label:
+                            driver.execute_script(
+                                "arguments[0].scrollIntoView({block:'center'});", btn
+                            )
+                            time.sleep(0.5)
+                            driver.execute_script("arguments[0].click();", btn)
+                            log.info("CHECKOUT_PROBE selected breakfast-included rate: %r", label[:120])
+                            breakfast_clicked = True
+                            time.sleep(5)
+                            break
+                    if breakfast_clicked:
+                        break
+                    try:
+                        node = node.find_element("xpath", "..")
+                    except Exception:
+                        break
+                if breakfast_clicked:
+                    break
+            except Exception:
+                continue
 
-            if not clicked:
-                save_diagnostics(driver, "checkout_safe_stop", body)
-                return CheckoutProbe(
-                    "safe_stop",
-                    current_url,
-                    "안전하게 자동 클릭할 수 있는 다음 단계가 없어 여기서 중지했습니다.",
-                )
+        # If Accor has already preselected a breakfast rate, do not keep clicking room buttons.
+        if not breakfast_clicked and "breakfast included" not in low:
+            save_diagnostics(driver, "checkout_no_breakfast_rate", body)
+            return CheckoutProbe(
+                "safe_stop",
+                driver.current_url,
+                "조식 포함 요금을 안전하게 식별하지 못해 자동 진행을 중지했습니다.",
+            )
 
         body = driver.find_element("tag name", "body").text or ""
-        save_diagnostics(driver, "checkout_max_steps", body)
+        low = body.lower()
+        if any(marker in low for marker in stop_markers):
+            save_diagnostics(driver, "checkout_payment_stop", body)
+            return CheckoutProbe(
+                "payment_boundary",
+                driver.current_url,
+                "결제/최종확정 단계가 감지되어 자동 진행을 중지했습니다.",
+            )
+        if any(marker in low for marker in form_markers):
+            save_diagnostics(driver, "checkout_guest_details_stop", body)
+            return CheckoutProbe(
+                "guest_details",
+                driver.current_url,
+                "예약자 정보 입력 단계가 감지되어 자동 진행을 중지했습니다.",
+            )
+
+        # After the room/rate is in the basket, Continue is the only safe forward action we want.
+        continue_btn = None
+        for el in driver.find_elements("xpath", "//*[self::button or self::a or @role='button']"):
+            try:
+                if not el.is_displayed() or not el.is_enabled():
+                    continue
+                label = re.sub(
+                    r"\\s+",
+                    " ",
+                    ((el.text or "") + " " + (el.get_attribute("aria-label") or "")),
+                ).strip().lower()
+                if label == "continue" or label.startswith("continue "):
+                    continue_btn = el
+                    break
+            except Exception:
+                continue
+
+        if continue_btn is None:
+            save_diagnostics(driver, "checkout_continue_missing", body)
+            return CheckoutProbe(
+                "safe_stop",
+                driver.current_url,
+                "조식 포함 객실은 선택됐지만 Continue 버튼을 찾지 못해 중지했습니다.",
+            )
+
+        driver.execute_script(
+            "arguments[0].scrollIntoView({block:'center'});", continue_btn
+        )
+        time.sleep(0.5)
+        driver.execute_script("arguments[0].click();", continue_btn)
+        log.info("CHECKOUT_PROBE clicked Continue after breakfast-included selection")
+        time.sleep(7)
+
+        body = driver.find_element("tag name", "body").text or ""
+        low = body.lower()
+        if any(marker in low for marker in stop_markers):
+            save_diagnostics(driver, "checkout_payment_stop", body)
+            return CheckoutProbe(
+                "payment_boundary",
+                driver.current_url,
+                "결제/최종확정 단계가 감지되어 자동 진행을 중지했습니다.",
+            )
+        if any(marker in low for marker in form_markers):
+            save_diagnostics(driver, "checkout_guest_details_stop", body)
+            return CheckoutProbe(
+                "guest_details",
+                driver.current_url,
+                "조식 포함 요금으로 예약자 정보 입력 단계까지 진입했습니다.",
+            )
+
+        save_diagnostics(driver, "checkout_after_continue", body)
         return CheckoutProbe(
-            "max_steps",
+            "safe_stop",
             driver.current_url,
-            "안전 제한(최대 4단계)에 도달해 자동 진행을 중지했습니다.",
+            "조식 포함 요금으로 Continue까지 진행했으며 다음 단계는 안전 확인을 위해 중지했습니다.",
         )
     except Exception as exc:
         return CheckoutProbe(

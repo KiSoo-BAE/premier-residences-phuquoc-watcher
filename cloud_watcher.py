@@ -390,10 +390,72 @@ def safe_checkout_probe(driver) -> CheckoutProbe:
             "arguments[0].scrollIntoView({block:'center'});", continue_btn
         )
         time.sleep(0.7)
-        driver.execute_script("arguments[0].click();", continue_btn)
-        log.info("CHECKOUT_PROBE clicked sticky Continue after breakfast-included selection")
-        time.sleep(8)
 
+        before_url = driver.current_url
+        before_body = driver.find_element("tag name", "body").text or ""
+        advanced = False
+        click_methods = ["native", "actions", "javascript"]
+
+        for method in click_methods:
+            try:
+                if method == "native":
+                    continue_btn.click()
+                elif method == "actions":
+                    from selenium.webdriver.common.action_chains import ActionChains
+                    ActionChains(driver).move_to_element(continue_btn).pause(0.3).click().perform()
+                else:
+                    driver.execute_script("arguments[0].click();", continue_btn)
+
+                log.info("CHECKOUT_PROBE Continue attempt method=%s", method)
+
+                # Success means real navigation/state change, not merely a click call returning.
+                for _ in range(16):
+                    time.sleep(0.5)
+                    now_url = driver.current_url
+                    now_body = driver.find_element("tag name", "body").text or ""
+                    now_low = now_body.lower()
+                    if (
+                        now_url != before_url
+                        or any(marker in now_low for marker in form_markers)
+                        or any(marker in now_low for marker in stop_markers)
+                        or ("continue" not in now_low and now_body != before_body)
+                    ):
+                        advanced = True
+                        break
+                if advanced:
+                    log.info(
+                        "CHECKOUT_PROBE Continue verified advanced method=%s before=%s after=%s",
+                        method, before_url, driver.current_url
+                    )
+                    break
+
+                # Re-resolve the sticky Continue control because Accor may replace DOM nodes.
+                refreshed = None
+                for xp in xpath_candidates:
+                    for el in driver.find_elements("xpath", xp):
+                        try:
+                            if el.is_displayed():
+                                refreshed = el
+                                break
+                        except Exception:
+                            pass
+                    if refreshed is not None:
+                        break
+                if refreshed is not None:
+                    continue_btn = refreshed
+            except Exception as exc:
+                log.warning("CHECKOUT_PROBE Continue method=%s failed: %s", method, exc)
+
+        if not advanced:
+            body = driver.find_element("tag name", "body").text or ""
+            save_diagnostics(driver, "checkout_continue_no_transition", body)
+            return CheckoutProbe(
+                "safe_stop",
+                driver.current_url,
+                "Continue 클릭을 3가지 방식으로 시도했지만 실제 다음 화면 전환이 확인되지 않아 중지했습니다.",
+            )
+
+        time.sleep(3)
         body = driver.find_element("tag name", "body").text or ""
         low = body.lower()
         if any(marker in low for marker in stop_markers):

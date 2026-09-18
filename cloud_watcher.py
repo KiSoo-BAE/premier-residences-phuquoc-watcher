@@ -321,37 +321,78 @@ def safe_checkout_probe(driver) -> CheckoutProbe:
             )
 
         # After the room/rate is in the basket, Continue is the only safe forward action we want.
+        # Accor renders the sticky bottom Continue control in a way that may not
+        # expose it as a normal button/a element. Search the whole DOM by visible
+        # text first, then fall back to JS text matching, while still only allowing
+        # the exact safe label "Continue".
         continue_btn = None
-        for el in driver.find_elements("xpath", "//*[self::button or self::a or @role='button']"):
+        xpath_candidates = [
+            "//*[normalize-space(text())='Continue']",
+            "//*[normalize-space(.)='Continue']",
+            "//*[@aria-label='Continue']",
+            "//*[@title='Continue']",
+        ]
+        for xp in xpath_candidates:
             try:
-                if not el.is_displayed() or not el.is_enabled():
-                    continue
-                label = re.sub(
-                    r"\\s+",
-                    " ",
-                    ((el.text or "") + " " + (el.get_attribute("aria-label") or "")),
-                ).strip().lower()
-                if label == "continue" or label.startswith("continue "):
-                    continue_btn = el
+                for el in driver.find_elements("xpath", xp):
+                    if el.is_displayed():
+                        continue_btn = el
+                        break
+                if continue_btn is not None:
                     break
             except Exception:
                 continue
+
+        if continue_btn is None:
+            try:
+                continue_btn = driver.execute_script(
+                    """
+                    const all = Array.from(document.querySelectorAll('button,a,[role="button"],div,span'));
+                    const exact = all.filter(el => (el.innerText || el.textContent || '').trim() === 'Continue');
+                    return exact.find(el => {
+                      const r = el.getBoundingClientRect();
+                      const s = getComputedStyle(el);
+                      return r.width > 20 && r.height > 20 && s.visibility !== 'hidden' && s.display !== 'none';
+                    }) || null;
+                    """
+                )
+            except Exception:
+                continue_btn = None
 
         if continue_btn is None:
             save_diagnostics(driver, "checkout_continue_missing", body)
             return CheckoutProbe(
                 "safe_stop",
                 driver.current_url,
-                "조식 포함 객실은 선택됐지만 Continue 버튼을 찾지 못해 중지했습니다.",
+                "조식 포함 객실은 선택됐지만 고정 하단 Continue 버튼을 찾지 못해 중지했습니다.",
             )
+
+        # If the text node itself is not clickable, climb to the nearest clickable ancestor.
+        try:
+            clickable = driver.execute_script(
+                """
+                let el = arguments[0];
+                for (let i=0; el && i<6; i++, el=el.parentElement) {
+                  const tag = (el.tagName || '').toLowerCase();
+                  const role = el.getAttribute && el.getAttribute('role');
+                  if (tag === 'button' || tag === 'a' || role === 'button' || typeof el.onclick === 'function') return el;
+                }
+                return arguments[0];
+                """,
+                continue_btn,
+            )
+            if clickable is not None:
+                continue_btn = clickable
+        except Exception:
+            pass
 
         driver.execute_script(
             "arguments[0].scrollIntoView({block:'center'});", continue_btn
         )
-        time.sleep(0.5)
+        time.sleep(0.7)
         driver.execute_script("arguments[0].click();", continue_btn)
-        log.info("CHECKOUT_PROBE clicked Continue after breakfast-included selection")
-        time.sleep(7)
+        log.info("CHECKOUT_PROBE clicked sticky Continue after breakfast-included selection")
+        time.sleep(8)
 
         body = driver.find_element("tag name", "body").text or ""
         low = body.lower()

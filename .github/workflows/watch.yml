@@ -2,7 +2,8 @@ name: Premier Residences Watcher
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    # Backup watchdog only. Main monitoring chain self-dispatches continuously.
+    - cron: "17,47 * * * *"
   workflow_dispatch:
   push:
     branches:
@@ -12,14 +13,13 @@ on:
       - "cloud_watcher.py"
 
 permissions:
+  actions: write
   contents: write
 
-concurrency:
-  group: premier-residences-watcher
-  cancel-in-progress: false
-
 jobs:
+  # Main watcher: runs only from workflow_dispatch.
   check:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 35
     env:
@@ -76,3 +76,133 @@ jobs:
             git pull --rebase origin main
             git push origin HEAD:main
           fi
+
+      - name: Start next watcher batch
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/watch.yml/dispatches"
+          BODY='{"ref":"main"}'
+
+          ok=0
+          for attempt in 1 2 3; do
+            echo "Dispatch next watcher batch: attempt ${attempt}/3"
+            code=$(curl -sS -o /tmp/dispatch_response.txt -w "%{http_code}"               -X POST               -H "Authorization: Bearer ${GH_TOKEN}"               -H "Accept: application/vnd.github+json"               -H "X-GitHub-Api-Version: 2022-11-28"               "${API}"               -d "${BODY}" || true)
+
+            if [ "${code}" = "204" ]; then
+              echo "Next watcher batch dispatched successfully."
+              ok=1
+              break
+            fi
+
+            echo "Dispatch failed with HTTP ${code}"
+            cat /tmp/dispatch_response.txt || true
+            sleep 10
+          done
+
+          if [ "${ok}" != "1" ]; then
+            python - <<'PY'
+          import os, requests
+          token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  data={
+                      "chat_id": chat_id,
+                      "text": "⚠️ Premier Residences 감시 체인 재시작 요청이 3회 실패했습니다. 백업 watchdog이 자동 복구를 시도합니다."
+                  },
+                  timeout=20,
+              )
+          PY
+            exit 1
+          fi
+
+  # Pushes only bootstrap the chain if there hasn't been a recent dispatch.
+  bootstrap:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Bootstrap watcher chain when needed
+        shell: bash
+        run: |
+          set -e
+          RUNS_API="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/watch.yml/runs?event=workflow_dispatch&per_page=1"
+          latest=$(curl -fsSL             -H "Authorization: Bearer ${GH_TOKEN}"             -H "Accept: application/vnd.github+json"             "${RUNS_API}" | python -c "import sys,json; d=json.load(sys.stdin); print((d.get('workflow_runs') or [{}])[0].get('created_at',''))")
+
+          stale=1
+          if [ -n "${latest}" ]; then
+            latest_epoch=$(date -u -d "${latest}" +%s)
+            now_epoch=$(date -u +%s)
+            age=$((now_epoch-latest_epoch))
+            echo "Latest workflow_dispatch age: ${age}s"
+            if [ "${age}" -lt 2700 ]; then
+              stale=0
+            fi
+          fi
+
+          if [ "${stale}" = "0" ]; then
+            echo "Watcher chain is recent; no bootstrap dispatch needed."
+            exit 0
+          fi
+
+          curl -fsSL -X POST             -H "Authorization: Bearer ${GH_TOKEN}"             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/watch.yml/dispatches"             -d '{"ref":"main"}'
+          echo "Watcher chain bootstrapped."
+
+  # Scheduled backup: only restarts the chain when no workflow_dispatch has appeared for 45 minutes.
+  watchdog:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - name: Verify watcher heartbeat and recover if stale
+        shell: bash
+        run: |
+          set -e
+          RUNS_API="https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/watch.yml/runs?event=workflow_dispatch&per_page=1"
+          latest=$(curl -fsSL             -H "Authorization: Bearer ${GH_TOKEN}"             -H "Accept: application/vnd.github+json"             "${RUNS_API}" | python -c "import sys,json; d=json.load(sys.stdin); print((d.get('workflow_runs') or [{}])[0].get('created_at',''))")
+
+          stale=1
+          age=-1
+          if [ -n "${latest}" ]; then
+            latest_epoch=$(date -u -d "${latest}" +%s)
+            now_epoch=$(date -u +%s)
+            age=$((now_epoch-latest_epoch))
+            echo "Latest workflow_dispatch age: ${age}s"
+            if [ "${age}" -lt 2700 ]; then
+              stale=0
+            fi
+          fi
+
+          if [ "${stale}" = "0" ]; then
+            echo "Watcher heartbeat healthy."
+            exit 0
+          fi
+
+          echo "Watcher heartbeat stale; dispatching recovery run."
+          curl -fsSL -X POST             -H "Authorization: Bearer ${GH_TOKEN}"             -H "Accept: application/vnd.github+json"             -H "X-GitHub-Api-Version: 2022-11-28"             "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/workflows/watch.yml/dispatches"             -d '{"ref":"main"}'
+
+          python - <<'PY'
+          import os, requests
+          token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+          chat_id = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+          if token and chat_id:
+              requests.post(
+                  f"https://api.telegram.org/bot{token}/sendMessage",
+                  data={
+                      "chat_id": chat_id,
+                      "text": "🔄 Premier Residences 감시가 45분 이상 끊겨 watchdog이 자동으로 재시작했습니다."
+                  },
+                  timeout=20,
+              )
+          PY

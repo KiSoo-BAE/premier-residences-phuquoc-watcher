@@ -1,0 +1,16 @@
+{
+  "status": "unavailable",
+  "max_selectable_observed": 4,
+  "note": "Adult plus button disabled before six",
+  "checked_at_utc": "2026-10-12T12:36:38.794242+00:00",
+  "visit_date": "2026-12-26",
+  "slot_local": "8:30 - 10:00",
+  "timezone": "Asia/Ho_Chi_Minh",
+  "adults": 6,
+  "booking_url": "https://booking.vinwonders.com/ko-KRW/search?code=PQSAF&usingDate=26-12-2026&VinWonderTagGroupCode=Bestseller&tab=VZT",
+  "run_id": "38250083742",
+  "telegram_verified": true,
+  "setup_sent": true,
+  "last_successful_status": "unavailable",
+  "consecutive_errors": 0
+}

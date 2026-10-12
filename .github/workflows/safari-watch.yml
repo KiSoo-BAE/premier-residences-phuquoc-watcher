@@ -1,11 +1,12 @@
 name: Safari Premium VIP Watcher
 
 on:
+  schedule:
+    - cron: '*/5 * * * *'
   workflow_dispatch:
   push:
     branches: [main]
     paths:
-      - safari_request.json
       - safari_watcher.py
       - .github/workflows/safari-watch.yml
 

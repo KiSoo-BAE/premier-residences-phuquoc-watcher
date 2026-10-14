@@ -1,8 +1,8 @@
 {
-  "status": "unavailable",
+  "status": "error",
   "max_selectable_observed": 4,
-  "note": "Adult plus button disabled before six",
-  "checked_at_utc": "2026-10-14T04:45:36.860662+00:00",
+  "note": "product load: TimeoutException",
+  "checked_at_utc": "2026-10-14T04:50:36.858425+00:00",
   "visit_date": "2026-12-26",
   "slot_local": "8:30 - 10:00",
   "timezone": "Asia/Ho_Chi_Minh",
@@ -12,8 +12,8 @@
   "telegram_verified": true,
   "setup_sent": true,
   "last_successful_status": "unavailable",
-  "consecutive_errors": 0,
+  "consecutive_errors": 1,
   "watch_mode": "continuous_5min",
-  "batch_check_number": 2,
-  "next_check_due_utc": "2026-10-14T04:50:36.724964+00:00"
+  "batch_check_number": 3,
+  "next_check_due_utc": "2026-10-14T04:55:36.725109+00:00"
 }

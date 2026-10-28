@@ -2,7 +2,7 @@
   "status": "unavailable",
   "max_selectable_observed": 4,
   "note": "Adult plus button disabled before six",
-  "checked_at_utc": "2026-10-28T04:38:17.772702+00:00",
+  "checked_at_utc": "2026-10-28T04:43:17.761611+00:00",
   "visit_date": "2026-12-26",
   "slot_local": "8:30 - 10:00",
   "timezone": "Asia/Ho_Chi_Minh",
@@ -14,6 +14,6 @@
   "last_successful_status": "unavailable",
   "consecutive_errors": 0,
   "watch_mode": "continuous_5min",
-  "batch_check_number": 5,
-  "next_check_due_utc": "2026-10-28T04:43:17.620600+00:00"
+  "batch_check_number": 6,
+  "next_check_due_utc": "2026-10-28T04:48:17.620778+00:00"
 }

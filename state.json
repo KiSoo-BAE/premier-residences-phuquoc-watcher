@@ -1,7 +1,7 @@
 {
-  "last_status": "error",
+  "last_status": "unavailable",
   "available_repeat_sent": false,
-  "failure_count": 2,
+  "failure_count": 0,
   "last_check_utc": "2026-09-17T04:34:20.505219+00:00",
-  "last_note": "Ambiguous page: signals=0, prices=0"
+  "last_note": "Unavailable marker detected"
 }

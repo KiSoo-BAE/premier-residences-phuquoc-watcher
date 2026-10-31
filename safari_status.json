@@ -2,7 +2,7 @@
   "status": "available",
   "max_selectable_observed": 6,
   "note": "Six adults selected and purchase button enabled; no order submitted",
-  "checked_at_utc": "2026-10-31T05:16:16.096369+00:00",
+  "checked_at_utc": "2026-10-31T05:21:16.097521+00:00",
   "visit_date": "2026-12-26",
   "slot_local": "8:30 - 10:00",
   "timezone": "Asia/Ho_Chi_Minh",
@@ -14,8 +14,8 @@
   "last_successful_status": "available",
   "consecutive_errors": 0,
   "watch_mode": "continuous_5min",
-  "batch_check_number": 5,
-  "next_check_due_utc": "2026-10-31T05:21:15.845095+00:00",
+  "batch_check_number": 6,
+  "next_check_due_utc": "2026-10-31T05:26:15.845256+00:00",
   "price_per_adult_display": "~₩51,888",
   "last_alert_at_utc": "2026-10-30T03:34:58.426804+00:00"
 }

@@ -1,0 +1,65 @@
+name: Cheongyak Telegram Relay
+
+# Alert content is public listing data only; credentials are kept in GitHub secrets.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "cheongyak_alert.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Send eligible apartment subscription alert to Telegram
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          from urllib.request import Request, urlopen
+
+          token = os.environ.get("TELEGRAM_BOT_TOKEN", "").strip()
+          chat = os.environ.get("TELEGRAM_CHAT_ID", "").strip()
+          if not token or not chat:
+              raise RuntimeError("Telegram repository secrets are missing.")
+
+          message_file = Path("cheongyak_alert.md")
+          if not message_file.exists():
+              raise RuntimeError("cheongyak_alert.md does not exist.")
+          message = message_file.read_text(encoding="utf-8").strip()
+          if not message:
+              raise RuntimeError("Empty alert cannot be sent.")
+
+          # Telegram sendMessage text is limited to 4096 characters.
+          if len(message) > 4000:
+              raise RuntimeError("Alert is over 4000 characters; shorten it before sending.")
+
+          body = json.dumps({
+              "chat_id": chat,
+              "text": message,
+              "disable_web_page_preview": True,
+          }, ensure_ascii=False).encode("utf-8")
+          request = Request(
+              "https://api.telegram.org/bot" + token + "/sendMessage",
+              data=body,
+              headers={"Content-Type": "application/json"},
+              method="POST",
+          )
+          with urlopen(request, timeout=25) as response:
+              result = json.loads(response.read().decode("utf-8"))
+          if not result.get("ok"):
+              raise RuntimeError("Telegram API did not acknowledge sendMessage.")
+          print("Telegram alert accepted by Telegram API.")
+          PY
